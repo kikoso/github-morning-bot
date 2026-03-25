@@ -1,3 +1,6 @@
 github_bot_config.json
 *.log
 setup_keychain.py
+credentials.json
+token.pickle
+.DS_Store
