@@ -3,17 +3,10 @@
 A Python-based bot that runs every morning on your Mac Mini to notify you of your latest GitHub activity, summarized by a local LLM via LM Studio.
 
 ## Features
-- **GitHub CLI Integration**: Uses `gh` to fetch mentions and pending Pull Requests without needing manual tokens.
-- **Local AI Summarization**: Connects to **LM Studio** (OpenAI-compatible API) to provide a concise, prioritized summary.
-- **Dual Notifications**:
-  - Native macOS system notifications.
-  - Telegram messages via a custom bot.
-- **Automated Scheduling**: Runs daily at 9:00 AM using macOS `launchd`.
-
-## Prerequisites
-- **GitHub CLI**: `gh` must be installed and authenticated (`gh auth login`).
-- **LM Studio**: Must be running with the Local Server enabled on port 1234.
-- **Python 3**: With the `requests` library installed (`pip3 install requests`).
+- **GitHub CLI Integration**: Uses `gh` to fetch mentions and pending Pull Requests.
+- **Google Calendar Integration**: Fetches your today's schedule for a holistic daily briefing.
+- **Local AI Summarization**: Connects to **LM Studio** to provide a concise, prioritized summary of both tasks and schedule.
+- **Dual Notifications**: macOS and Telegram.
 
 ## Setup
 
@@ -24,20 +17,16 @@ A Python-based bot that runs every morning on your Mac Mini to notify you of you
    ```
 
 2. **Configure the bot**:
-   Create a `github_bot_config.json` in the same directory (this file is gitignored for security):
-   ```json
-   {
-     "github_username": "YOUR_USERNAME",
-     "lm_studio_base_url": "http://localhost:1234/v1",
-     "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
-     "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID",
-     "notification_time": "09:00"
-   }
-   ```
+   - Create `github_bot_config.json` with your details.
+   - For Google Calendar:
+     1. Create a "Desktop app" project in [Google Cloud Console](https://console.cloud.google.com/).
+     2. Enable **Google Calendar API**.
+     3. Download the credentials as `credentials.json` into this folder.
+     4. On first run, follow the browser login to create `token.pickle`.
 
 3. **Install dependencies**:
    ```bash
-   pip3 install requests --user
+   pip3 install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib --user
    ```
 
 ## Scheduling (macOS)
