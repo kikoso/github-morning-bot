@@ -3,6 +3,7 @@ import requests
 import subprocess
 import os
 import re
+import keyring
 
 CONFIG_PATH = os.path.expanduser("~/Documents/github-morning-bot/github_bot_config.json")
 
@@ -75,7 +76,7 @@ def summarize_with_lm_studio(data, base_url):
         return f"Could not connect to LM Studio: {e}"
 
 def send_telegram_message(summary, bot_token, chat_id):
-    if bot_token == "YOUR_TELEGRAM_BOT_TOKEN":
+    if not bot_token or bot_token == "YOUR_TELEGRAM_BOT_TOKEN":
         print("Telegram bot token not configured.")
         return
 
@@ -117,6 +118,14 @@ def main():
     try:
         config = load_config()
         
+        # Fetch secrets from Keychain if enabled
+        if config.get("use_keychain"):
+            telegram_bot_token = keyring.get_password("github-morning-bot", "telegram_bot_token")
+            telegram_chat_id = keyring.get_password("github-morning-bot", "telegram_chat_id")
+        else:
+            telegram_bot_token = config.get("telegram_bot_token")
+            telegram_chat_id = config.get("telegram_chat_id")
+
         # Use GH CLI
         data = fetch_github_data_via_gh(config["github_username"])
         
@@ -125,7 +134,7 @@ def main():
         
         # Send notifications
         send_macos_notification(summary)
-        send_telegram_message(summary, config["telegram_bot_token"], config["telegram_chat_id"])
+        send_telegram_message(summary, telegram_bot_token, telegram_chat_id)
         
         print("Done! Check your Telegram and macOS notifications.")
         

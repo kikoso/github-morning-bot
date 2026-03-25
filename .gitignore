@@ -1,2 +1,3 @@
 github_bot_config.json
 *.log
+setup_keychain.py
