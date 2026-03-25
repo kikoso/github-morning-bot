@@ -9,46 +9,83 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-import pickle
 
-# If modifying these scopes, delete the file token.pickle.
+# If modifying these scopes, delete the token from Keychain.
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 CONFIG_PATH = os.path.expanduser("~/Documents/github-morning-bot/github_bot_config.json")
+SERVICE_NAME = "github-morning-bot"
 
 def load_config():
     with open(CONFIG_PATH, "r") as f:
         return json.load(f)
 
-def fetch_calendar_events():
-    """Fetches today's events from Google Calendar."""
+def get_google_creds():
+    """Retrieves Google Calendar credentials from Keychain or local file."""
+    # 1. Try to get the OAuth Token from Keychain
+    token_json = keyring.get_password(SERVICE_NAME, "google_oauth_token")
     creds = None
-    token_path = os.path.expanduser("~/Documents/github-morning-bot/token.pickle")
-    credentials_path = os.path.expanduser("~/Documents/github-morning-bot/credentials.json")
-    
-    if os.path.exists(token_path):
-        with open(token_path, 'rb') as token:
-            creds = pickle.load(token)
-    
+    if token_json:
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+
+    # 2. Refresh if expired
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        keyring.set_password(SERVICE_NAME, "google_oauth_token", creds.to_json())
+
+    # 3. If no valid creds, start the flow
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+        # Check if we have client secrets in Keychain
+        client_id = keyring.get_password(SERVICE_NAME, "google_client_id")
+        client_secret = keyring.get_password(SERVICE_NAME, "google_client_secret")
+        
+        if client_id and client_secret:
+            client_config = {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            }
+            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
         else:
+            # Fallback to credentials.json if it exists (for initial setup)
+            credentials_path = os.path.expanduser("~/Documents/github-morning-bot/credentials.json")
             if not os.path.exists(credentials_path):
-                print("Missing credentials.json for Google Calendar. Skipping calendar.")
-                return []
+                print("Missing Google credentials in Keychain or credentials.json. Skipping calendar.")
+                return None
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(token_path, 'wb') as token:
-            pickle.dump(creds, token)
+            
+            # Optional: Migrate secrets to Keychain
+            with open(credentials_path, 'r') as f:
+                secrets = json.load(f).get('installed', {})
+                if secrets:
+                    keyring.set_password(SERVICE_NAME, "google_client_id", secrets['client_id'])
+                    keyring.set_password(SERVICE_NAME, "google_client_secret", secrets['client_secret'])
+
+        creds = flow.run_local_server(port=0)
+        # Store the new token in Keychain
+        keyring.set_password(SERVICE_NAME, "google_oauth_token", creds.to_json())
+    
+    return creds
+
+def fetch_calendar_events():
+    """Fetches today's events from Google Calendar using Keychain creds."""
+    creds = get_google_creds()
+    if not creds: return []
 
     service = build('calendar', 'v3', credentials=creds)
     now = datetime.datetime.utcnow().isoformat() + 'Z'
     end_of_day = (datetime.datetime.utcnow().replace(hour=23, minute=59, second=59)).isoformat() + 'Z'
     
-    events_result = service.events().list(calendarId='primary', timeMin=now,
-                                        timeMax=end_of_day, singleEvents=True,
-                                        orderBy='startTime').execute()
-    return events_result.get('items', [])
+    try:
+        events_result = service.events().list(calendarId='primary', timeMin=now,
+                                            timeMax=end_of_day, singleEvents=True,
+                                            orderBy='startTime').execute()
+        return events_result.get('items', [])
+    except Exception as e:
+        print(f"Calendar API error: {e}")
+        return []
 
 def fetch_github_data_via_gh(username):
     """Uses the GitHub CLI (gh) to fetch data."""
@@ -74,7 +111,12 @@ def summarize_with_lm_studio(github_data, calendar_data, base_url):
     if calendar_data:
         for event in calendar_data:
             start = event['start'].get('dateTime', event['start'].get('date'))
-            prompt += f"- {event['summary']} (at {start})\n"
+            # Format time for readability if it exists
+            time_str = start
+            if 'T' in start:
+                time_obj = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
+                time_str = time_obj.strftime("%H:%M")
+            prompt += f"- {event['summary']} (at {time_str})\n"
     else:
         prompt += "- No events scheduled for today.\n"
 
@@ -133,8 +175,8 @@ def main():
     try:
         config = load_config()
         if config.get("use_keychain"):
-            telegram_bot_token = keyring.get_password("github-morning-bot", "telegram_bot_token")
-            telegram_chat_id = keyring.get_password("github-morning-bot", "telegram_chat_id")
+            telegram_bot_token = keyring.get_password(SERVICE_NAME, "telegram_bot_token")
+            telegram_chat_id = keyring.get_password(SERVICE_NAME, "telegram_chat_id")
         else:
             telegram_bot_token = config.get("telegram_bot_token")
             telegram_chat_id = config.get("telegram_chat_id")
@@ -145,7 +187,7 @@ def main():
         
         send_macos_notification(summary)
         send_telegram_message(summary, telegram_bot_token, telegram_chat_id)
-        print("Success! Morning update sent.")
+        print("Success! Morning update sent (Keychain secured).")
     except Exception as e:
         print(f"Error: {e}")
 
