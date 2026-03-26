@@ -12,7 +12,8 @@ from google.auth.transport.requests import Request
 
 # If modifying these scopes, delete the token from Keychain.
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-CONFIG_PATH = os.path.expanduser("~/Documents/github-morning-bot/github_bot_config.json")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_bot_config.json")
 SERVICE_NAME = "github-morning-bot"
 
 def load_config():
@@ -89,9 +90,10 @@ def fetch_calendar_events():
 
 def fetch_github_data_via_gh(username):
     """Uses the GitHub CLI (gh) to fetch data."""
+    gh_path = "/opt/homebrew/bin/gh"
     def run_gh_search(query):
         try:
-            cmd = ["gh", "search", "issues", "--json", "title,url", "--limit", "10"] + query.split()
+            cmd = [gh_path, "search", "issues", "--json", "title,url", "--limit", "10"] + query.split()
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 return json.loads(result.stdout)
@@ -105,7 +107,7 @@ def fetch_github_data_via_gh(username):
     }
 
 def summarize_with_lm_studio(github_data, calendar_data, base_url):
-    prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, summarize my GitHub activity (mentions and PRs). Keep it concise and prioritize things I need to act on. Format as a short bulleted list. IMPORTANT: For each GitHub item you list, YOU MUST include its corresponding URL.\n\n"
+    prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, summarize my GitHub activity (mentions and PRs). Keep it concise and prioritize things I need to act on. Format as a short bulleted list. IMPORTANT: For each GitHub item you list, YOU MUST include its corresponding URL. DO NOT include any follow-up questions or offers for further assistance.\n\n"
     
     prompt += "CALENDAR EVENTS TODAY:\n"
     if calendar_data:

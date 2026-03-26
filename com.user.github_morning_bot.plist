@@ -7,18 +7,25 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/enriquelopezmanas/Documents/github-morning-bot/github_morning_bot.py</string>
+        <string>/Users/enriquelopezmanas/github-morning-bot/github_morning_bot.py</string>
     </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/enriquelopezmanas/github-morning-bot</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
+    </dict>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>9</integer>
+        <integer>8</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
     <key>StandardErrorPath</key>
-    <string>/Users/enriquelopezmanas/Documents/github-morning-bot/error.log</string>
+    <string>/Users/enriquelopezmanas/github-morning-bot/error.log</string>
     <key>StandardOutPath</key>
-    <string>/Users/enriquelopezmanas/Documents/github-morning-bot/output.log</string>
+    <string>/Users/enriquelopezmanas/github-morning-bot/output.log</string>
 </dict>
 </plist>
