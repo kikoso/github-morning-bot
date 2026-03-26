@@ -229,7 +229,8 @@ def main():
         
         send_macos_notification(summary)
         send_telegram_message(summary, telegram_bot_token, telegram_chat_id)
-        print("Success! Morning update sent (Keychain secured).")
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{now_str}] Success! Morning update sent (Keychain secured).")
     except Exception as e:
         print(f"Error: {e}")
 
