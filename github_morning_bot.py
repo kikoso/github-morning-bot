@@ -11,7 +11,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
 # If modifying these scopes, delete the token from Keychain.
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/gmail.readonly'
+]
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_bot_config.json")
 SERVICE_NAME = "github-morning-bot"
@@ -21,7 +24,7 @@ def load_config():
         return json.load(f)
 
 def get_google_creds():
-    """Retrieves Google Calendar credentials from Keychain or local file."""
+    """Retrieves Google Calendar and Gmail credentials from Keychain or local file."""
     # 1. Try to get the OAuth Token from Keychain
     token_json = keyring.get_password(SERVICE_NAME, "google_oauth_token")
     creds = None
@@ -30,8 +33,12 @@ def get_google_creds():
 
     # 2. Refresh if expired
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        keyring.set_password(SERVICE_NAME, "google_oauth_token", creds.to_json())
+        try:
+            creds.refresh(Request())
+            keyring.set_password(SERVICE_NAME, "google_oauth_token", creds.to_json())
+        except Exception as e:
+            print(f"Error refreshing credentials: {e}")
+            creds = None
 
     # 3. If no valid creds, start the flow
     if not creds or not creds.valid:
@@ -51,9 +58,9 @@ def get_google_creds():
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
         else:
             # Fallback to credentials.json if it exists (for initial setup)
-            credentials_path = os.path.expanduser("~/Documents/github-morning-bot/credentials.json")
+            credentials_path = os.path.join(SCRIPT_DIR, "credentials.json")
             if not os.path.exists(credentials_path):
-                print("Missing Google credentials in Keychain or credentials.json. Skipping calendar.")
+                print("Missing Google credentials in Keychain or credentials.json. Skipping Google services.")
                 return None
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
             
@@ -71,7 +78,7 @@ def get_google_creds():
     return creds
 
 def fetch_calendar_events():
-    """Fetches today's events from Google Calendar using Keychain creds."""
+    """Fetches today's events from Google Calendar."""
     creds = get_google_creds()
     if not creds: return []
 
@@ -86,6 +93,28 @@ def fetch_calendar_events():
         return events_result.get('items', [])
     except Exception as e:
         print(f"Calendar API error: {e}")
+        return []
+
+def fetch_unread_emails():
+    """Fetches unread emails from Gmail."""
+    creds = get_google_creds()
+    if not creds: return []
+
+    service = build('gmail', 'v1', credentials=creds)
+    try:
+        results = service.users().messages().list(userId='me', q='is:unread', maxResults=10).execute()
+        messages = results.get('messages', [])
+        
+        email_summaries = []
+        for msg in messages:
+            msg_data = service.users().messages().get(userId='me', id=msg['id'], format='metadata', metadataHeaders=['From', 'Subject']).execute()
+            headers = msg_data.get('payload', {}).get('headers', [])
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '(No Subject)')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), '(Unknown Sender)')
+            email_summaries.append({"sender": sender, "subject": subject})
+        return email_summaries
+    except Exception as e:
+        print(f"Gmail API error: {e}")
         return []
 
 def fetch_github_data_via_gh(username):
@@ -106,8 +135,8 @@ def fetch_github_data_via_gh(username):
         "review_requested": run_gh_search(f"review-requested:{username} is:pr is:open")
     }
 
-def summarize_with_lm_studio(github_data, calendar_data, base_url):
-    prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, summarize my GitHub activity (mentions and PRs). Keep it concise and prioritize things I need to act on. Format as a short bulleted list. IMPORTANT: For each GitHub item you list, YOU MUST include its corresponding URL. DO NOT include any follow-up questions or offers for further assistance.\n\n"
+def summarize_with_lm_studio(github_data, calendar_data, email_data, base_url):
+    prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, summarize my GitHub activity (mentions and PRs). Finally, list my recent unread emails. Keep it concise and prioritize things I need to act on. Format as a short bulleted list. IMPORTANT: For each GitHub item you list, YOU MUST include its corresponding URL. DO NOT include any follow-up questions or offers for further assistance.\n\n"
     
     prompt += "CALENDAR EVENTS TODAY:\n"
     if calendar_data:
@@ -136,13 +165,23 @@ def summarize_with_lm_studio(github_data, calendar_data, base_url):
         for item in github_data["review_requested"]:
             prompt += f"- {item['title']} (URL: {item['url']})\n"
             
-    if not has_github and not calendar_data:
+    if not has_github:
+        prompt += "- No significant GitHub activity.\n"
+
+    prompt += "\nUNREAD EMAILS:\n"
+    if email_data:
+        for email in email_data:
+            prompt += f"- From: {email['sender']} | Subject: {email['subject']}\n"
+    else:
+        prompt += "- No unread emails.\n"
+
+    if not has_github and not calendar_data and not email_data:
         return "Nothing much going on today! Enjoy your morning."
 
     payload = {
         "model": "model-identifier",
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant that summarizes a senior engineer's day (Calendar & GitHub)."},
+            {"role": "system", "content": "You are a helpful assistant that summarizes a senior engineer's day (Calendar, GitHub & Emails)."},
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.7
@@ -184,8 +223,9 @@ def main():
             telegram_chat_id = config.get("telegram_chat_id")
 
         calendar_data = fetch_calendar_events()
+        email_data = fetch_unread_emails()
         github_data = fetch_github_data_via_gh(config["github_username"])
-        summary = summarize_with_lm_studio(github_data, calendar_data, config["lm_studio_base_url"])
+        summary = summarize_with_lm_studio(github_data, calendar_data, email_data, config["lm_studio_base_url"])
         
         send_macos_notification(summary)
         send_telegram_message(summary, telegram_bot_token, telegram_chat_id)
