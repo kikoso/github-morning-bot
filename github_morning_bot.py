@@ -29,11 +29,13 @@ def get_google_creds():
     token_json = keyring.get_password(SERVICE_NAME, "google_oauth_token")
     creds = None
     if token_json:
+        print("Loading credentials from Keychain...")
         creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
 
     # 2. Refresh if expired
     if creds and creds.expired and creds.refresh_token:
         try:
+            print("Refreshing expired credentials...")
             creds.refresh(Request())
             keyring.set_password(SERVICE_NAME, "google_oauth_token", creds.to_json())
         except Exception as e:
@@ -42,6 +44,12 @@ def get_google_creds():
 
     # 3. If no valid creds, start the flow
     if not creds or not creds.valid:
+        # If we are in a non-interactive shell (like launchd), do not try to start a local server
+        import sys
+        if not sys.stdin.isatty():
+            print("Non-interactive session detected. Cannot start OAuth flow for Google services.")
+            return None
+
         # Check if we have client secrets in Keychain
         client_id = keyring.get_password(SERVICE_NAME, "google_client_id")
         client_secret = keyring.get_password(SERVICE_NAME, "google_client_secret")
@@ -117,26 +125,26 @@ def fetch_unread_emails():
         print(f"Gmail API error: {e}")
         return []
 
-def fetch_github_data_via_gh(username):
-    """Uses the GitHub CLI (gh) to fetch data."""
-    gh_path = "/opt/homebrew/bin/gh"
-    def run_gh_search(query):
-        try:
-            cmd = [gh_path, "search", "issues", "--json", "title,url", "--limit", "10"] + query.split()
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                return json.loads(result.stdout)
+def fetch_macos_notes_todos(note_name):
+    """Fetches TODO items from a specific macOS Note."""
+    apple_script = f'tell application "Notes" to get body of note "{note_name}"'
+    try:
+        result = subprocess.run(["osascript", "-e", apple_script], capture_output=True, text=True)
+        if result.returncode != 0:
             return []
-        except Exception:
-            return []
+        
+        body = result.stdout
+        # Basic extraction of <li> items from HTML-like body
+        todos = re.findall(r'<li>(.*?)</li>', body)
+        # Clean up any other HTML tags inside <li>
+        todos = [re.sub(r'<.*?>', '', t).strip() for t in todos]
+        return todos
+    except Exception as e:
+        print(f"macOS Notes error: {e}")
+        return []
 
-    return {
-        "mentions": run_gh_search(f"mentions:{username} is:open"),
-        "review_requested": run_gh_search(f"review-requested:{username} is:pr is:open")
-    }
-
-def summarize_with_lm_studio(github_data, calendar_data, email_data, base_url):
-    prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, summarize my GitHub activity (mentions and PRs). Finally, list my recent unread emails. Keep it concise and prioritize things I need to act on. Format as a short bulleted list. IMPORTANT: For each GitHub item you list, YOU MUST include its corresponding URL. DO NOT include any follow-up questions or offers for further assistance.\n\n"
+def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
+    prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, list my TODOs from my notes. Finally, list my recent unread emails. Keep it concise and prioritize things I need to act on. Format as a short bulleted list. DO NOT include any follow-up questions or offers for further assistance.\n\n"
     
     prompt += "CALENDAR EVENTS TODAY:\n"
     if calendar_data:
@@ -151,22 +159,12 @@ def summarize_with_lm_studio(github_data, calendar_data, email_data, base_url):
     else:
         prompt += "- No events scheduled for today.\n"
 
-    prompt += "\nGITHUB ACTIVITY:\n"
-    has_github = False
-    if github_data["mentions"]:
-        has_github = True
-        prompt += "Mentions:\n"
-        for item in github_data["mentions"]:
-            prompt += f"- {item['title']} (URL: {item['url']})\n"
-            
-    if github_data["review_requested"]:
-        has_github = True
-        prompt += "\nReview Requests:\n"
-        for item in github_data["review_requested"]:
-            prompt += f"- {item['title']} (URL: {item['url']})\n"
-            
-    if not has_github:
-        prompt += "- No significant GitHub activity.\n"
+    prompt += "\nTODOS FROM NOTES:\n"
+    if todo_data:
+        for todo in todo_data:
+            prompt += f"- {todo}\n"
+    else:
+        prompt += "- No TODOs found.\n"
 
     prompt += "\nUNREAD EMAILS:\n"
     if email_data:
@@ -175,20 +173,20 @@ def summarize_with_lm_studio(github_data, calendar_data, email_data, base_url):
     else:
         prompt += "- No unread emails.\n"
 
-    if not has_github and not calendar_data and not email_data:
+    if not calendar_data and not email_data and not todo_data:
         return "Nothing much going on today! Enjoy your morning."
 
     payload = {
         "model": "model-identifier",
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant that summarizes a senior engineer's day (Calendar, GitHub & Emails)."},
+            {"role": "system", "content": "You are a helpful assistant that summarizes a senior engineer's day (Calendar, Notes & Emails)."},
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.7
     }
     
     try:
-        response = requests.post(f"{base_url}/chat/completions", json=payload)
+        response = requests.post(f"{base_url}/chat/completions", json=payload, timeout=60)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         return f"Error from LM Studio: {response.status_code}"
@@ -205,7 +203,7 @@ def send_telegram_message(summary, bot_token, chat_id):
         "text": f"☀️ <b>Morning Daily Update</b>\n\n{html_summary}",
         "parse_mode": "HTML"
     }
-    requests.post(url, json=payload)
+    requests.post(url, json=payload, timeout=30)
 
 def send_macos_notification(summary):
     short_summary = (summary[:200] + '...') if len(summary) > 200 else summary
@@ -213,6 +211,8 @@ def send_macos_notification(summary):
     subprocess.run(["osascript", "-e", apple_script])
 
 def main():
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now_str}] Bot started...")
     try:
         config = load_config()
         if config.get("use_keychain"):
@@ -224,8 +224,8 @@ def main():
 
         calendar_data = fetch_calendar_events()
         email_data = fetch_unread_emails()
-        github_data = fetch_github_data_via_gh(config["github_username"])
-        summary = summarize_with_lm_studio(github_data, calendar_data, email_data, config["lm_studio_base_url"])
+        todo_data = fetch_macos_notes_todos("TODO")
+        summary = summarize_with_lm_studio(calendar_data, email_data, todo_data, config["lm_studio_base_url"])
         
         send_macos_notification(summary)
         send_telegram_message(summary, telegram_bot_token, telegram_chat_id)

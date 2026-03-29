@@ -13,6 +13,8 @@
     <string>/Users/enriquelopezmanas/github-morning-bot</string>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
         <key>PATH</key>
         <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
         <key>TZ</key>

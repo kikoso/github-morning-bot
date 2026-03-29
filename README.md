@@ -34,19 +34,22 @@ To schedule the bot to run every morning at 9:00 AM:
 
 1. Copy the `.plist` file to your LaunchAgents directory:
    ```bash
-   cp ~/Documents/github-morning-bot/com.user.github_morning_bot.plist ~/Library/LaunchAgents/
+   cp ~/github-morning-bot/com.user.github_morning_bot.plist ~/Library/LaunchAgents/
    ```
 
 2. Load the agent:
    ```bash
-   launchctl load ~/Library/LaunchAgents/com.user.github_morning_bot.plist
+   launchctl load -w ~/Library/LaunchAgents/com.user.github_morning_bot.plist
    ```
 
 ## Manual Run
 You can test the bot at any time by running:
 ```bash
-/usr/bin/python3 ~/Documents/github-morning-bot/github_morning_bot.py
+/usr/bin/python3 ~/github-morning-bot/github_morning_bot.py
 ```
 
 ## Security
 The `github_bot_config.json` file contains your private API tokens and is excluded from the repository via `.gitignore`. Never commit this file.
+
+## License
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
