@@ -91,8 +91,10 @@ def fetch_calendar_events():
     if not creds: return []
 
     service = build('calendar', 'v3', credentials=creds)
-    now = datetime.datetime.utcnow().isoformat() + 'Z'
-    end_of_day = (datetime.datetime.utcnow().replace(hour=23, minute=59, second=59)).isoformat() + 'Z'
+    # Use local time with timezone awareness
+    now_local = datetime.datetime.now().astimezone()
+    now = now_local.isoformat()
+    end_of_day = now_local.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
     
     try:
         events_result = service.events().list(calendarId='primary', timeMin=now,
