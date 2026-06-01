@@ -179,7 +179,7 @@ def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
         return "Nothing much going on today! Enjoy your morning."
 
     payload = {
-        "model": "model-identifier",
+        "model": "google/gemma-4-26b-a4b",
         "messages": [
             {"role": "system", "content": "You are a helpful assistant that summarizes a senior engineer's day (Calendar, Notes & Emails)."},
             {"role": "user", "content": prompt}
@@ -188,10 +188,19 @@ def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
     }
     
     try:
-        response = requests.post(f"{base_url}/chat/completions", json=payload, timeout=60)
+        response = requests.post(f"{base_url}/chat/completions", json=payload, timeout=180)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
-        return f"Error from LM Studio: {response.status_code}"
+        
+        error_msg = f"Error from LM Studio: {response.status_code}"
+        try:
+            error_detail = response.json()
+            error_msg += f" - {json.dumps(error_detail)}"
+        except:
+            error_msg += f" - {response.text}"
+            
+        print(error_msg)
+        return error_msg
     except Exception as e:
         return f"Could not connect to LM Studio: {e}"
 
