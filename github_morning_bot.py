@@ -214,7 +214,11 @@ def send_telegram_message(summary, bot_token, chat_id):
         "text": f"☀️ <b>Morning Daily Update</b>\n\n{html_summary}",
         "parse_mode": "HTML"
     }
-    requests.post(url, json=payload, timeout=30)
+    try:
+        requests.post(url, json=payload, timeout=30)
+    except requests.RequestException as e:
+        # requests puts the full URL, token included, in its errors; never print it
+        raise type(e)(str(e).replace(bot_token, "<telegram-token>")) from None
 
 def send_macos_notification(summary):
     short_summary = (summary[:200] + '...') if len(summary) > 200 else summary
