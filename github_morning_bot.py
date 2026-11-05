@@ -184,7 +184,10 @@ def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
             {"role": "system", "content": "You are a helpful assistant that summarizes a senior engineer's day (Calendar, Notes & Emails)."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7
+        "temperature": 0.7,
+        # Gemma 4 thinks before answering by default: ~1,400 reasoning tokens took over 6 minutes
+        # on the Mac mini (timeouts from 2026-11-03); without it the summary takes under a minute
+        "reasoning_effort": "none"
     }
     
     try:
