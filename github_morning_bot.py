@@ -228,6 +228,18 @@ def send_macos_notification(summary):
     apple_script = f'display notification "{short_summary}" with title "Morning Daily Update"'
     subprocess.run(["osascript", "-e", apple_script])
 
+def push_kuma(ok, msg):
+    """Heartbeat to the "Morning bot" push monitor in Uptime Kuma (portfolio-dashboard), which
+    alerts on Telegram on a degraded run or when none reports for 25 hours. Best effort."""
+    try:
+        token = subprocess.run(["security", "find-generic-password", "-s", "uptime-kuma-push-morningbot", "-w"],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+        if token:
+            requests.get(f"http://127.0.0.1:3001/api/push/{token}",
+                         params={"status": "up" if ok else "down", "msg": msg[:200]}, timeout=10)
+    except Exception:
+        pass
+
 def main():
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now_str}] Bot started...")
@@ -249,8 +261,15 @@ def main():
         send_telegram_message(summary, telegram_bot_token, telegram_chat_id)
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now_str}] Success! Morning update sent (Keychain secured).")
+        problems = []
+        if get_google_creds() is None:
+            problems.append("Google login expired: run github_morning_bot.py in a terminal")
+        if "LM Studio was unavailable" in summary or summary.startswith("Error"):
+            problems.append("LM Studio did not summarize")
+        push_kuma(not problems, "; ".join(problems) or "sent")
     except Exception as e:
         print(f"Error: {e}")
+        push_kuma(False, f"{type(e).__name__}: {e}")
 
 if __name__ == "__main__":
     main()
