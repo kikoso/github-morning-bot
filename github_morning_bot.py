@@ -191,7 +191,9 @@ def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
     }
     
     try:
-        response = requests.post(f"{base_url}/chat/completions", json=payload, timeout=180)
+        # A cold start loads the 26B model (~45 s), reads the prompt (~25 s with many emails) and
+        # writes ~250 tokens at ~6/s: about 2 minutes, so 90 s cut the summary off (2026-11-06)
+        response = requests.post(f"{base_url}/chat/completions", json=payload, timeout=300)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         
