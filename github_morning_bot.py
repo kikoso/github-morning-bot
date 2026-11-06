@@ -5,6 +5,7 @@ import os
 import re
 import keyring
 import datetime
+import time
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -145,18 +146,88 @@ def fetch_macos_notes_todos(note_name):
         print(f"macOS Notes error: {e}")
         return []
 
+def wait_for_lm_studio(base_url, max_wait_seconds=120, check_interval=10):
+    """Waits for LM Studio to become responsive."""
+    models_url = base_url.rstrip("/")
+    if not models_url.endswith("/v1"):
+        models_url = f"{models_url}/v1"
+    models_url = f"{models_url}/models"
+    
+    start_time = time.time()
+    print(f"Waiting for LM Studio to become ready at {models_url} (up to {max_wait_seconds}s)...")
+    while time.time() - start_time < max_wait_seconds:
+        try:
+            response = requests.get(models_url, timeout=5)
+            if response.status_code == 200:
+                print("LM Studio is ready and responding!")
+                return True
+        except Exception:
+            pass
+        time.sleep(check_interval)
+    print("LM Studio did not become ready in time.")
+    return False
+
+def generate_fallback_summary(calendar_data, email_data, todo_data, reason=None):
+    """Generates a beautifully formatted raw update when LM Studio is not available."""
+    lines = []
+    if reason:
+        lines.append(f"⚠️ **Note: LM Studio was unavailable ({reason}). Showing raw updates.**\n")
+    
+    lines.append("**CALENDAR EVENTS TODAY:**")
+    if calendar_data:
+        for event in calendar_data:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            time_str = start
+            if 'T' in start:
+                try:
+                    time_obj = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
+                    time_str = time_obj.strftime("%H:%M")
+                except Exception:
+                    pass
+            lines.append(f"- {event['summary']} (at {time_str})")
+    else:
+        lines.append("- No events scheduled for today.")
+
+    lines.append("\n**TODOS FROM NOTES:**")
+    if todo_data:
+        for todo in todo_data:
+            lines.append(f"- {todo}")
+    else:
+        lines.append("- No TODOs found.")
+
+    lines.append("\n**UNREAD EMAILS:**")
+    if email_data:
+        for email in email_data:
+            lines.append(f"- From: {email['sender']} | Subject: {email['subject']}")
+    else:
+        lines.append("- No unread emails.")
+        
+    return "\n".join(lines)
+
 def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
+    if not calendar_data and not email_data and not todo_data:
+        return "Nothing much going on today! Enjoy your morning."
+
+    # 1. Wait for LM Studio to start/respond
+    is_ready = wait_for_lm_studio(base_url, max_wait_seconds=120, check_interval=10)
+    if not is_ready:
+        print("LM Studio is offline or loading too slowly. Falling back to local summary.")
+        return generate_fallback_summary(calendar_data, email_data, todo_data, reason="Offline/Timeout")
+
+    # 2. Build the prompt for LM Studio
     prompt = "Summarize my day. First, list my upcoming Google Calendar events for today. Then, list my TODOs from my notes. Finally, list my recent unread emails. Keep it concise and prioritize things I need to act on. Format as a short bulleted list. DO NOT include any follow-up questions or offers for further assistance.\n\n"
     
     prompt += "CALENDAR EVENTS TODAY:\n"
     if calendar_data:
         for event in calendar_data:
             start = event['start'].get('dateTime', event['start'].get('date'))
-            # Format time for readability if it exists
             time_str = start
             if 'T' in start:
-                time_obj = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
-                time_str = time_obj.strftime("%H:%M")
+                try:
+                    time_obj = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
+                    time_str = time_obj.strftime("%H:%M")
+                except Exception:
+                    pass
             prompt += f"- {event['summary']} (at {time_str})\n"
     else:
         prompt += "- No events scheduled for today.\n"
@@ -175,9 +246,7 @@ def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
     else:
         prompt += "- No unread emails.\n"
 
-    if not calendar_data and not email_data and not todo_data:
-        return "Nothing much going on today! Enjoy your morning."
-
+    # 3. Call LM Studio API with safety timeout
     payload = {
         "model": "google/gemma-4-26b-a4b",
         "messages": [
@@ -204,10 +273,12 @@ def summarize_with_lm_studio(calendar_data, email_data, todo_data, base_url):
         except:
             error_msg += f" - {response.text}"
             
-        print(error_msg)
-        return error_msg
+        print(f"{error_msg}. Falling back to local summary.")
+        return generate_fallback_summary(calendar_data, email_data, todo_data, reason=f"API Error {response.status_code}")
     except Exception as e:
-        return f"Could not connect to LM Studio: {e}"
+        print(f"LM Studio API request exception: {e}. Falling back to local summary.")
+        return generate_fallback_summary(calendar_data, email_data, todo_data, reason=str(type(e).__name__))
+
 
 def send_telegram_message(summary, bot_token, chat_id):
     if not bot_token: return
